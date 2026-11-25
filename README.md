@@ -62,6 +62,35 @@ The model has 12.3M parameters: 11.2M in the pretrained encoder and 1.1M in the 
 - The whole network is fine-tuned, with two learning rates: **1e-4** for the pretrained encoder, so its features are adjusted gently instead of erased, and **1e-3** for the new layers.
 - The rest of the recipe: AdamW, cosine learning-rate schedule, batch size 32, 12 epochs, and loss = cross-entropy (class) + binary cross-entropy (mask). Augmentation applies the same small rotation, shift and zoom to the image and its mask. There are no flips, because the heart sits on the left. After every epoch the model is checked on the validation set, and the epoch with the best validation accuracy is saved.
 
+## Results
+
+Training took 46 minutes on a 12-core CPU, about 3.8 minutes per epoch. The best validation accuracy came at epoch 10 (92.7%), and that checkpoint is `outputs/model.pt`. The 900 test images were not used for training or model selection.
+
+| Task | Test result |
+|---|---|
+| Classification accuracy | **93.7%** (843 / 900) |
+| Lung mask Dice, mean | **0.977** |
+| Lung mask IoU, mean | 0.957 |
+| Lung mask Dice, worst image | 0.761 |
+
+| Class | Precision | Recall | F1 |
+|---|---|---|---|
+| normal | 0.917 | 0.917 | 0.917 |
+| lung_opacity | 0.912 | 0.933 | 0.923 |
+| covid | 0.983 | 0.960 | 0.971 |
+
+![Learning curves](outputs/learning_curves.png)
+
+The segmentation curves for train and validation stay together, so the mask decoder generalises. Classification overfits a little: train accuracy reaches 98% while validation levels off around 92% after epoch 7.
+
+![Confusion matrix](outputs/confusion_matrix.png)
+
+40 of the 57 test errors are normal and lung opacity mistaken for each other. Both classes come from RSNA, so the model can't rely on source differences there. COVID scores highest, which fits the source caveat above.
+
+![Segmentation examples](outputs/segmentation_examples.png)
+
+On these test images the predicted lung outlines (red) almost exactly cover the true outlines (green). Each example has a Dice score of 0.97 or higher.
+
 ## Setup
 
 ```bash
