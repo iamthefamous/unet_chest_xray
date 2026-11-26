@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>U-Net on chest X-rays | Presentation-02</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,500&family=Caveat:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#dde5e5;      /* light-box glass */
+  --paper2:#cbd6d7;
+  --film:#10181b;       /* developed film */
+  --film2:#1b272b;
+  --ink:#14252a;
+  --mute:#566a6f;
+  --steel:#3d6d8a;      /* encoder */
+  --amber:#e0a038;      /* decoder */
+  --truth:#18c564;      /* hand-drawn true outline */
+  --pred:#ee3b3b;       /* model outline */
+  --head:'Familjen Grotesk',system-ui,sans-serif;
+  --hand:'Caveat','Segoe Print',cursive;
+  --mono:'JetBrains Mono',Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#0b1214;overflow:hidden;font-family:var(--head);color:var(--ink)}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+:focus-visible{outline:3px solid var(--pred);outline-offset:3px}
+
+/* fixed 1600x900 stage, scaled to fit */
+#stage{position:absolute;left:50%;top:50%;width:1600px;height:900px;transform-origin:center;background:var(--paper);overflow:hidden}
+.slide{position:absolute;inset:0;padding:64px 88px 96px 120px;visibility:hidden;clip-path:inset(100% 0 0 0);background:var(--paper)}
+.slide.on{visibility:visible;clip-path:inset(0);z-index:2}
+.slide.enter{visibility:visible;z-index:3;animation:advance .75s cubic-bezier(.7,0,.2,1) both}
+.slide.leave{visibility:visible;z-index:1;animation:dim .75s linear both}
+@keyframes advance{from{clip-path:inset(100% 0 0 0)}to{clip-path:inset(0)}}
+@keyframes dim{to{filter:brightness(.55)}}
+.back .enter{animation-name:advanceBack}
+@keyframes advanceBack{from{clip-path:inset(0 0 100% 0)}to{clip-path:inset(0)}}
+
+/* film sleeve edge on the left: sprocket holes + frame number */
+.edge{position:absolute;left:0;top:0;bottom:0;width:56px;background:var(--film);z-index:5}
+.edge::before{content:"";position:absolute;inset:14px 0;background:repeating-linear-gradient(var(--paper) 0 26px,transparent 26px 56px);background-size:18px 56px;background-repeat:repeat-y;background-position:19px 0;border-radius:3px;opacity:.9}
+.edge span{position:absolute;left:0;right:0;bottom:22px;text-align:center;font:600 15px var(--mono);color:var(--amber);background:var(--film);padding:6px 0;z-index:1}
+
+h1,h2,h3{font-weight:700;letter-spacing:-.02em;line-height:1.02}
+h2{font-size:64px;margin-bottom:10px}
+h2 small{display:block;font:500 30px var(--hand);color:var(--pred);letter-spacing:0;margin-bottom:6px;transform:rotate(-1.5deg);transform-origin:left}
+p,li{font-size:25px;line-height:1.38}
+.mute{color:var(--mute)}
+.hand{font-family:var(--hand);font-weight:700;color:var(--pred);font-size:30px;line-height:1.05}
+.hand.g{color:#0e9a49}
+.film{background:var(--film);color:#e8f0f0;border-radius:6px}
+
+.rise>*{opacity:0;transform:translateY(14px)}
+.on.run .rise>*{animation:rise .5s ease forwards;animation-delay:calc(var(--i,0)*90ms + .45s)}
+@keyframes rise{to{opacity:1;transform:none}}
+
+/* ---------- 1 title ---------- */
+#s1{padding:0}
+#s1 .title{position:absolute;left:120px;top:90px;width:680px}
+#s1 h1{font-size:104px;line-height:.95}
+#s1 h1 em{font-style:normal;color:var(--steel)}
+#s1 .sub{font-size:31px;margin-top:30px;max-width:620px;line-height:1.3}
+#s1 .meta{position:absolute;left:120px;bottom:70px;font-size:22px;line-height:1.55}
+#s1 .meta b{font-weight:600}
+.xray{position:absolute;right:76px;top:60px;width:700px;height:780px;background:var(--film);border-radius:6px;padding:34px 34px 0;transform:rotate(1.4deg);box-shadow:0 30px 60px -20px #0007}
+.xray .pic{position:relative;width:632px;height:632px;overflow:hidden}
+.xray img{width:100%;height:100%;display:block;filter:brightness(.18) contrast(1.4);transition:filter 2.4s ease .6s;image-rendering:auto}
+.on.run .xray img{filter:none}
+.scan{position:absolute;left:0;right:0;height:5px;background:#9bffd0;box-shadow:0 0 22px 6px #46f0a088;top:0;opacity:0}
+.on.run .scan{animation:scan 2.6s ease-in-out .5s}
+@keyframes scan{0%{top:0;opacity:1}95%{top:100%;opacity:1}100%{top:100%;opacity:0}}
+.xray figcaption{color:#9bb;font:500 28px var(--hand);padding:14px 4px;display:flex;justify-content:space-between}
+.key{display:flex;gap:26px;font:600 19px var(--mono);margin-top:6px;color:#cfe}
+.key i{display:inline-block;width:26px;height:5px;vertical-align:middle;margin-right:8px;border-radius:2px}
+
+/* ---------- 2 background ---------- */
+.cols{display:grid;gap:56px}
+#s2 .cols{grid-template-columns:1fr 1fr;margin-top:30px}
+#s2 p{font-size:27px}
+#s2 p{margin-bottom:18px}
+.tl{position:relative;margin-top:14px;padding-left:34px}
+.tl::before{content:"";position:absolute;left:8px;top:8px;bottom:8px;width:4px;background:var(--ink);transform-origin:top;transform:scaleY(0)}
+.on.run .tl::before{animation:grow 1.6s ease .6s forwards}
+@keyframes grow{to{transform:scaleY(1)}}
+.tl div{position:relative;margin-bottom:20px}
+.tl div::before{content:"";position:absolute;left:-34px;top:9px;width:20px;height:20px;border-radius:50%;background:var(--paper);border:4px solid var(--ink)}
+.tl .me::before{background:var(--pred);border-color:var(--pred);box-shadow:0 0 0 8px #ee3b3b33}
+.tl b{font-size:30px;font-weight:700;margin-right:10px}
+.tl span{font-size:22px;color:var(--mute);display:block;line-height:1.3}
+.tl .me span{color:var(--ink)}
+.quote{margin-top:20px;border-left:6px solid var(--amber);padding:6px 0 6px 20px;font-size:25px}
+
+/* ---------- 3 task + data ---------- */
+#s3 .cols{grid-template-columns:600px 1fr;margin-top:22px;align-items:start}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.out{padding:18px 20px 20px;border-radius:6px}
+.out h3{font-size:30px;margin-bottom:6px}
+.out p{font-size:21px;line-height:1.3}
+.out .tag{font:600 17px var(--mono);margin-top:10px;display:block}
+.bars{margin-top:20px}
+.bar{display:flex;height:64px;border-radius:5px;overflow:hidden;margin:10px 0 6px;font:600 22px var(--head)}
+.bar div{display:flex;align-items:center;justify-content:center;color:#fff;transform-origin:left;transform:scaleX(0)}
+.on.run .bar div{animation:scx .9s cubic-bezier(.2,.7,.2,1) forwards;animation-delay:calc(.7s + var(--i)*.15s)}
+@keyframes scx{to{transform:scaleX(1)}}
+.bar .tr{background:var(--steel)}.bar .va{background:var(--amber);color:var(--ink)}.bar .te{background:var(--film)}
+.classes{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:22px}
+.cls{background:var(--paper2);border-radius:6px;padding:14px 16px;font-size:20px;line-height:1.25}
+.cls b{display:block;font-size:25px;margin-bottom:4px}
+.cls.warn{background:#f1d9b0}
+.stick{margin-top:22px;background:#f4e08a;padding:16px 20px;font-size:21px;line-height:1.3;transform:rotate(-.8deg);box-shadow:3px 6px 0 #0002;max-width:900px}
+.stick b{font-weight:700}
+
+/* ---------- 4 architecture ---------- */
+#s4{padding-bottom:70px}
+#arch{position:absolute;left:100px;top:190px;width:1420px;height:540px}
+#arch svg{width:100%;height:100%;overflow:visible}
+.blk{cursor:pointer;transition:transform .2s}
+.blk rect{transition:filter .2s}
+.blk:hover rect,.blk.sel rect{filter:brightness(1.18)}
+.blk text{pointer-events:none}
+.skip{stroke:var(--ink);stroke-width:3;stroke-dasharray:9 8;fill:none;opacity:0}
+.on.run .skip{animation:fin .6s ease forwards;animation-delay:calc(1.6s + var(--i)*.25s)}
+.blk{opacity:0}
+.on.run .blk{animation:fin .5s ease forwards;animation-delay:calc(.3s + var(--i)*.14s)}
+@keyframes fin{to{opacity:1}}
+.pulse{fill:#fff;stroke:var(--ink);stroke-width:3;opacity:0}
+#info{position:absolute;left:112px;top:648px;width:600px;min-height:150px;padding:22px 26px;background:var(--film);color:#e8f0f0;border-radius:6px;font-size:21px;line-height:1.3;z-index:4}
+#info b{display:block;font-size:30px;color:var(--amber);margin-bottom:4px}
+#s4 .hint{position:absolute;right:90px;top:80px;font-size:28px;transform:rotate(2deg)}
+
+/* ---------- 5 unique ---------- */
+#s5 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;margin-top:30px}
+.feat{padding:24px 26px 26px;background:var(--paper2);border-radius:6px;min-height:290px}
+.feat:nth-child(2){margin-top:34px}.feat:nth-child(3){margin-top:12px}
+.feat h3{font-size:32px;margin-bottom:10px}
+.feat p{font-size:22px;line-height:1.35}
+.feat svg{width:100%;height:84px;margin-bottom:12px}
+.cmp{margin-top:34px;width:100%;border-collapse:collapse;font-size:22px}
+.cmp th{font-weight:700;text-align:left;padding:8px 14px;font-size:24px}
+.cmp td{padding:9px 14px;border-top:2px solid var(--ink)}
+.cmp td:first-child{font-weight:600;width:24%}
+.cmp td:nth-child(3){background:#ee3b3b14}
+
+/* ---------- 6 transfer ---------- */
+#s6 .cols{grid-template-columns:1fr 1fr;margin-top:26px;gap:44px}
+.step{display:grid;grid-template-columns:70px 1fr;gap:18px;margin-bottom:22px;align-items:start}
+.step .n{width:62px;height:62px;border-radius:50%;background:var(--film);color:var(--amber);font:700 28px var(--mono);display:grid;place-items:center}
+.step h3{font-size:29px;margin-bottom:2px}
+.step p{font-size:21px;line-height:1.3}
+.lr{padding:26px 30px;border-radius:6px}
+.lr h3{font-size:27px;margin-bottom:18px;color:var(--amber)}
+.lrow{display:grid;grid-template-columns:150px 1fr 76px;gap:14px;align-items:center;margin-bottom:16px;font-size:22px}
+.lrow i{display:block;height:30px;border-radius:3px;transform-origin:left;transform:scaleX(0)}
+.on.run .lrow i{animation:scx 1s cubic-bezier(.2,.8,.2,1) 1s forwards}
+.lrow code{font:600 20px var(--mono)}
+.gray{margin-top:24px;display:flex;align-items:center;gap:18px;font-size:20px;line-height:1.3}
+.gray .sw{display:flex;gap:4px}
+.gray .sw b{width:26px;height:46px;border-radius:3px}
+.gray .arrow{font:700 34px var(--hand)}
+
+/* ---------- 7 applications ---------- */
+#s7 .sheet{display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:auto;gap:22px;margin-top:34px}
+.app{background:var(--film);color:#e8f0f0;border-radius:6px;padding:22px 24px 24px;position:relative}
+.app:nth-child(1){grid-column:1/4;transform:rotate(-.7deg)}
+.app:nth-child(2){grid-column:4/7;transform:rotate(.6deg);margin-top:14px}
+.app:nth-child(3){grid-column:1/3;transform:rotate(.5deg)}
+.app:nth-child(4){grid-column:3/5;transform:rotate(-.6deg);margin-top:16px}
+.app:nth-child(5){grid-column:5/7;transform:rotate(.8deg)}
+.app h3{font-size:31px;margin-bottom:8px;color:#fff}
+.app p{font-size:23px;line-height:1.35;color:#c6d4d6}
+.app .hand{position:absolute;right:16px;top:12px;font-size:25px;color:var(--truth);transform:rotate(4deg)}
+.app.mine{outline:4px solid var(--pred);outline-offset:4px}
+.app.mine .hand{color:var(--pred)}
+
+/* ---------- 8 implementation ---------- */
+#s8 .cols{grid-template-columns:760px 1fr;margin-top:22px;gap:34px}
+pre{font:400 17px/1.5 var(--mono);background:var(--film);color:#cfe3e3;padding:22px 26px;border-radius:6px;overflow:hidden;white-space:pre}
+pre .k{color:#f2b552}pre .c{color:#6f8a8d}pre .f{color:#7fd1ff}pre .n{color:#ff8c8c}
+.files{font-size:21px}
+.files div{display:grid;grid-template-columns:150px 1fr;gap:10px;padding:9px 0;border-top:2px solid var(--ink);line-height:1.25}
+.files code{font:600 19px var(--mono);color:var(--steel)}
+.cmd{margin-top:18px;font:500 20px var(--mono);background:var(--paper2);padding:14px 18px;border-radius:6px;line-height:1.6}
+.cmd span{color:var(--mute)}
+
+/* ---------- 9 results ---------- */
+#s9 .top{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:20px}
+.big{background:var(--film);color:#fff;border-radius:6px;padding:20px 26px 18px}
+.big b{font-size:84px;line-height:1;font-weight:700;display:block;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.big span{font-size:21px;color:#aab;display:block;margin-top:6px}
+.big:nth-child(1) b{color:var(--amber)}.big:nth-child(2) b{color:var(--truth)}.big:nth-child(3) b{color:#9dd3ff}
+#s9 .row2{display:grid;grid-template-columns:760px 1fr;gap:34px;margin-top:22px;align-items:start}
+.chart{background:#f3f7f7;border-radius:6px;padding:16px 18px 6px}
+.chart h3{font-size:23px;margin-bottom:2px}
+.chart svg{width:100%;display:block}
+.path{stroke-dasharray:var(--len);stroke-dashoffset:var(--len)}
+.on.run .path{animation:draw 2.2s ease forwards .9s}
+@keyframes draw{to{stroke-dashoffset:0}}
+.cm{display:grid;grid-template-columns:132px repeat(3,1fr);gap:5px;font-size:21px}
+.cm div{display:grid;place-items:center;height:78px;border-radius:4px;font-weight:600;font-size:28px;font-variant-numeric:tabular-nums}
+.cm .h{height:34px;font-size:18px;font-weight:600;background:none;color:var(--mute)}
+.cm .r{background:none;font-size:18px;justify-items:end;color:var(--mute);text-align:right;padding-right:6px}
+.cm-note{margin-top:14px;font-size:21px;line-height:1.3}
+
+/* ---------- 10 gallery ---------- */
+#s10 .gal{display:grid;grid-template-columns:repeat(9,1fr);gap:10px;margin-top:16px}
+.gal button{position:relative;border-radius:4px;overflow:hidden;background:var(--film);padding:0;aspect-ratio:1;border:3px solid transparent}
+.gal button.sel{border-color:var(--pred)}
+.gal img{width:100%;height:100%;display:block;opacity:.65;transition:opacity .2s}
+.gal button:hover img,.gal button.sel img{opacity:1}
+.viewer{display:grid;grid-template-columns:430px 1fr;gap:44px;margin-top:18px;align-items:center}
+.viewer .film{padding:12px;width:430px;height:430px}
+.viewer img{width:100%;height:100%;display:block}
+.viewer h3{font-size:44px;margin-bottom:10px}
+.viewer .v{display:grid;grid-template-columns:auto 1fr;gap:6px 22px;font-size:27px;margin-top:10px}
+.viewer .v b{font-variant-numeric:tabular-nums}
+
+/* ---------- 11 limits ---------- */
+#s11 .cols{grid-template-columns:1fr 1fr;margin-top:30px;gap:30px}
+.lim{padding:26px 30px;border-radius:6px;background:var(--paper2)}
+.lim h3{font-size:32px;margin-bottom:10px}
+.lim p{font-size:23px;line-height:1.35}
+.lim:nth-child(1){transform:rotate(-.5deg)}.lim:nth-child(2){transform:rotate(.5deg);margin-top:18px}
+.lim:nth-child(3){transform:rotate(.4deg)}.lim:nth-child(4){transform:rotate(-.4deg);margin-top:18px}
+.lim .hand{display:block;margin-top:10px;font-size:28px}
+
+/* ---------- 12 end ---------- */
+#s12{background:var(--film);color:#e8f0f0}
+#s12 .edge{background:#0a1012}
+#s12 h2{font-size:120px;color:#fff;margin-top:70px}
+#s12 ul{list-style:none;margin-top:36px;max-width:790px}
+#s12 li{font-size:30px;padding:14px 0;border-top:2px solid #ffffff30}
+#s12 li b{color:var(--amber)}
+#s12 .out2{position:absolute;right:90px;top:120px;width:520px;height:520px;padding:0}
+#s12 .out2 img{width:100%;height:100%;border-radius:6px;display:block}
+#s12 .hand{position:absolute;right:110px;top:668px;font-size:46px;transform:rotate(-3deg)}
+#s12 .src{position:absolute;left:120px;bottom:64px;font-size:20px;color:#8fa3a5}
+
+/* ---------- nav ---------- */
+#nav{position:absolute;left:0;right:0;bottom:0;height:46px;z-index:20;display:flex;align-items:center;gap:6px;padding:0 24px 0 72px;background:linear-gradient(transparent,#0003)}
+#nav button.f{width:46px;height:30px;border-radius:3px;background:var(--film);color:var(--amber);font:600 13px var(--mono);opacity:.45;transition:opacity .2s,transform .2s}
+#nav button.f:hover{opacity:.85}
+#nav button.f.cur{opacity:1;transform:translateY(-5px)}
+#nav .tt{margin-left:auto;font:500 24px var(--hand);color:var(--mute)}
+#prog{position:absolute;left:56px;right:0;bottom:0;height:5px;z-index:21;background:#0001}
+#prog i{display:block;height:100%;width:0;background:var(--pred);transition:width .6s}
+.tip{position:absolute;left:0;right:0;top:0;height:0}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01s!important;animation-delay:0s!important;transition-duration:.01s!important}
+}
+</style>
+</head>
+<body>
+<main id="stage" aria-label="Presentation: U-Net on chest X-rays">
+
+<!-- 1 TITLE -->
+<section class="slide" id="s1" data-title="Title">
+  <div class="edge"><span>01</span></div>
+  <div class="title">
+    <h1>A U-Net that reads <em>chest X-rays</em></h1>
+    <p class="sub rise">It draws the lungs pixel by pixel, then says whether they look normal, show a lung opacity, or show COVID-19.</p>
+  </div>
+  <div class="meta">
+    <b>Presentation-02, Computer Vision</b><br>
+    Tuesday, 24 November 2026<br>
+    Group: Member 1, Member 2, Member 3
+  </div>
+  <figure class="xray">
+    <div class="pic">
+      <img src="assets/seg0.png" alt="Chest X-ray with the true lung outline in green and the U-Net outline in red">
+      <div class="scan"></div>
+    </div>
+    <figcaption><span>test image, Dice 0.99</span>
+      <span class="key"><span><i style="background:var(--truth)"></i>true</span><span><i style="background:var(--pred)"></i>U-Net</span></span>
+    </figcaption>
+  </figure>
+</section>
+
+<!-- 2 BACKGROUND -->
+<section class="slide" id="s2" data-title="Background">
+  <div class="edge"><span>02</span></div>
+  <h2><small>1. Background</small>Where U-Net came from</h2>
+  <div class="cols">
+    <div class="rise">
+      <p style="--i:0"><b>The problem.</b> In 2015 a deep network could say what is in a picture. Biomedical work needed more: which pixels belong to a cell, an organ or a tumour. And a hospital does not have a million labelled scans.</p>
+      <p style="--i:1"><b>The idea.</b> Olaf Ronneberger, Philipp Fischer and Thomas Brox at the University of Freiburg built a network shaped like the letter U. It squeezes the image to learn what is there, then expands it again to learn where, passing detail across through skip connections.</p>
+      <p style="--i:2" class="quote">It trained on only about 30 annotated microscope images, with heavy elastic augmentation, and won the ISBI 2015 cell tracking challenge.</p>
+    </div>
+    <div class="tl rise">
+      <div style="--i:0"><b>2012</b>AlexNet<span>Deep nets win image classification.</span></div>
+      <div style="--i:1"><b>2014</b>Fully convolutional networks<span>One label per pixel becomes possible.</span></div>
+      <div style="--i:2"><b>2015</b>U-Net<span>Skip connections and a symmetric decoder make it work with little data.</span></div>
+      <div style="--i:3"><b>2015 to today</b>The default for segmentation<span>Medical imaging, satellites, and the denoiser inside diffusion models.</span></div>
+      <div class="me" style="--i:4"><b>This project</b>U-Net plus ResNet-18<span>The 2015 shape with a pretrained encoder, applied to lungs.</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3 TASK + DATA -->
+<section class="slide" id="s3" data-title="The task and the data">
+  <div class="edge"><span>03</span></div>
+  <h2><small>1. Background</small>One X-ray in, two answers out</h2>
+  <div class="cols">
+    <div class="rise">
+      <div class="two">
+        <div class="out" style="background:var(--film);color:#e8f0f0;--i:0"><h3>Lung mask</h3><p>Which pixels are lung. This is segmentation, the job U-Net was made for.</p><span class="tag" style="color:var(--truth)">128 x 128 mask</span></div>
+        <div class="out" style="background:var(--amber);--i:1"><h3>Diagnosis</h3><p>One of three classes, read from the deepest layer of the network.</p><span class="tag">3 classes</span></div>
+      </div>
+      <div class="stick" style="--i:2;margin-top:26px"><b>Why both?</b> The mask shows where the model looks. If the outline lands on the lungs, we can trust that the class is not read from a corner of the image.</div>
+    </div>
+    <div>
+      <p class="mute" style="font-size:22px">COVID-19 Radiography Database: 6,000 images, 2,000 per class, resized to 128 x 128. Every image comes with a lung mask.</p>
+      <div class="bars">
+        <div class="bar" style="width:100%"><div class="tr" style="--i:0;width:70%">Train 4,200</div><div class="va" style="--i:1;width:15%">900</div><div class="te" style="--i:2;width:15%">900</div></div>
+        <p class="mute" style="font-size:19px">Train, validation, test. Each split holds the same number of every class (1,400 / 300 / 300).</p>
+      </div>
+      <div class="classes rise">
+        <div class="cls" style="--i:3"><b>normal</b>RSNA challenge</div>
+        <div class="cls" style="--i:4"><b>lung_opacity</b>RSNA challenge, non-COVID pneumonia</div>
+        <div class="cls warn" style="--i:5"><b>covid</b>Other hospitals and public collections</div>
+      </div>
+      <div class="stick rise" style="--i:6;background:#f6c9c4"><b>Careful:</b> the COVID images come from different sources, with different framing and burned-in text. The model may partly learn the source, so COVID scores are probably optimistic.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 ARCHITECTURE -->
+<section class="slide" id="s4" data-title="Architecture">
+  <div class="edge"><span>04</span></div>
+  <h2><small>2. Architecture</small>The U, built from ResNet-18</h2>
+  <p class="hand hint">click a block</p>
+  <div id="arch"></div>
+  <div id="info" aria-live="polite"></div>
+</section>
+
+<!-- 5 UNIQUE -->
+<section class="slide" id="s5" data-title="What sets it apart">
+  <div class="edge"><span>05</span></div>
+  <h2><small>2. Architecture</small>What sets U-Net apart</h2>
+  <div class="grid rise">
+    <div class="feat" style="--i:0">
+      <svg viewBox="0 0 300 84"><path d="M10 12 H110 V72 H10Z" fill="#3d6d8a"/><path d="M190 12 H290 V72 H190Z" fill="#e0a038"/><path d="M110 28 H190" stroke="#14252a" stroke-width="4" stroke-dasharray="9 7"/><path d="M182 21 L192 28 L182 35" fill="none" stroke="#14252a" stroke-width="4"/></svg>
+      <h3>Skip connections</h3><p>Each decoder step receives the encoder map of the same size. Fine edges that pooling threw away come back for the mask.</p>
+    </div>
+    <div class="feat" style="--i:1">
+      <svg viewBox="0 0 300 84"><path d="M20 70 L90 14 L90 70Z" fill="#3d6d8a"/><path d="M280 70 L210 14 L210 70Z" fill="#e0a038"/><rect x="120" y="40" width="60" height="30" fill="#14252a"/></svg>
+      <h3>A mirrored decoder</h3><p>Four downsampling steps, four upsampling steps. The output ends up as large as the input, so every pixel gets a label.</p>
+    </div>
+    <div class="feat" style="--i:2">
+      <svg viewBox="0 0 300 84"><g fill="#14252a"><rect x="14" y="40" width="22" height="30"/><rect x="44" y="30" width="22" height="40"/><rect x="74" y="20" width="22" height="50"/></g><g fill="#ee3b3b"><rect x="130" y="14" width="150" height="56"/></g><text x="140" y="48" fill="#fff" font-family="Familjen Grotesk" font-weight="700" font-size="24">few images</text></svg>
+      <h3>Works with little data</h3><p>Pixels are the training signal, not whole images, and the original paper added elastic deformations on top.</p>
+    </div>
+  </div>
+  <table class="cmp rise">
+    <tr style="--i:3"><th></th><th>U-Net, 2015</th><th>This project</th></tr>
+    <tr style="--i:4"><td>Encoder</td><td>Plain conv blocks, trained from scratch</td><td>ResNet-18 pretrained on ImageNet</td></tr>
+    <tr style="--i:5"><td>Convolutions</td><td>No padding, output smaller than input</td><td>Padding, mask matches the input</td></tr>
+    <tr style="--i:6"><td>Heads</td><td>Mask only</td><td>Mask plus a 3-class diagnosis head</td></tr>
+  </table>
+</section>
+
+<!-- 6 TRANSFER -->
+<section class="slide" id="s6" data-title="Transfer learning">
+  <div class="edge"><span>06</span></div>
+  <h2><small>2. Architecture</small>Borrowing eyes from ImageNet</h2>
+  <div class="cols">
+    <div class="rise">
+      <div class="step" style="--i:0"><div class="n">1</div><div><h3>Load the encoder</h3><p>torchvision ResNet-18, weights IMAGENET1K_V1. It already knows edges, textures and shapes.</p></div></div>
+      <div class="step" style="--i:1"><div class="n">2</div><div><h3>Make it see gray</h3><p>X-rays have one channel, ImageNet has three. The first convolution is summed over R, G and B, so a gray image gets the same response.</p></div></div>
+      <div class="step" style="--i:2"><div class="n">3</div><div><h3>Fine-tune everything</h3><p>The whole network trains, but the pretrained part moves ten times slower than the new decoder.</p></div></div>
+    </div>
+    <div>
+      <div class="lr film">
+        <h3>Learning rate per part</h3>
+        <div class="lrow"><span>Encoder</span><i style="width:10%;background:var(--steel)"></i><code>1e-4</code></div>
+        <div class="lrow"><span>Decoder and heads</span><i style="width:100%;background:var(--amber)"></i><code>1e-3</code></div>
+        <p style="font-size:20px;color:#aab;margin-top:6px">Small steps keep the pretrained features from being erased.</p>
+      </div>
+      <div class="gray rise">
+        <div class="sw" style="--i:3"><b style="background:#e34"></b><b style="background:#3b5"></b><b style="background:#47e"></b></div>
+        <span class="arrow" style="--i:3">sum</span>
+        <div class="sw" style="--i:3"><b style="background:#888"></b></div>
+        <span style="--i:3">3 colour filters become 1 gray filter</span>
+      </div>
+      <p class="mute rise" style="--i:4;margin-top:18px;font-size:21px">Recipe: AdamW, cosine schedule, batch 32, 12 epochs. Loss is cross-entropy for the class plus binary cross-entropy for the mask.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 7 APPLICATIONS -->
+<section class="slide" id="s7" data-title="Applications">
+  <div class="edge"><span>07</span></div>
+  <h2><small>3. Applications</small>Wherever a pixel needs a label</h2>
+  <div class="sheet rise">
+    <div class="app mine" style="--i:0"><span class="hand">our project</span><h3>Medical imaging</h3><p>Outlining lungs, organs, tumours, retinal vessels and cells in X-ray, CT, MRI and microscopy. Doctors check the outline instead of trusting a bare label. nnU-Net, a self-configuring U-Net, is a standard baseline in medical challenges.</p></div>
+    <div class="app" style="--i:1"><span class="hand g">road ahead</span><h3>Self-driving cars</h3><p>Labelling each pixel as road, lane, car or pedestrian. U-Net style encoder-decoders are a common starting point for this.</p></div>
+    <div class="app" style="--i:2"><h3>Satellite images</h3><p>Finding buildings, roads, crops and flooded land from above.</p></div>
+    <div class="app" style="--i:3"><h3>Phone apps</h3><p>Portrait mode and background removal. Small U-Net variants run on mobile chips.</p></div>
+    <div class="app" style="--i:4"><h3>Image generators</h3><p>Stable Diffusion uses a U-Net to remove noise step by step.</p></div>
+  </div>
+</section>
+
+<!-- 8 IMPLEMENTATION -->
+<section class="slide" id="s8" data-title="Implementation">
+  <div class="edge"><span>08</span></div>
+  <h2><small>4. Implementation</small>PyTorch, CPU only, 46 minutes</h2>
+  <div class="cols">
+<pre class="rise"><span class="c"># one expanding step of the U</span>
+<span class="k">class</span> <span class="f">UpBlock</span>(nn.Module):
+    <span class="k">def</span> <span class="f">__init__</span>(self, in_ch, skip_ch, out_ch):
+        self.up   = nn.ConvTranspose2d(in_ch, out_ch, 2, stride=2)
+        self.conv = double_conv(out_ch + skip_ch, out_ch)
+
+    <span class="k">def</span> <span class="f">forward</span>(self, x, skip):
+        x = self.up(x)                  <span class="c"># 2x bigger</span>
+        x = torch.cat([x, skip], dim=<span class="n">1</span>)  <span class="c"># skip connection</span>
+        <span class="k">return</span> self.conv(x)
+
+<span class="c"># forward pass returns BOTH outputs</span>
+mask_logits, class_logits = model(xray)</pre>
+    <div>
+      <div class="files rise">
+        <div style="--i:0"><code>data.py</code><span>Downloads the dataset, builds the balanced split, augments image and mask together</span></div>
+        <div style="--i:1"><code>model.py</code><span>U-Net with ResNet-18 encoder, Dice score, save and load</span></div>
+        <div style="--i:2"><code>train.py</code><span>Transfer-learning loop, keeps the best validation epoch</span></div>
+        <div style="--i:3"><code>evaluate.py</code><span>Accuracy, confusion matrix, Dice and IoU on the test set</span></div>
+        <div style="--i:4"><code>predict.py</code><span>Mask and class for any new X-ray</span></div>
+      </div>
+      <div class="cmd rise" style="--i:5">12.3M parameters: 11.2M pretrained, 1.1M new<br>No flips in augmentation, because the heart sits on the left</div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 RESULTS -->
+<section class="slide" id="s9" data-title="Results">
+  <div class="edge"><span>09</span></div>
+  <h2><small>4. Implementation</small>Results on 900 unseen images</h2>
+  <div class="top">
+    <div class="big"><b data-to="93.7" data-dec="1" data-suf="%">0</b><span>classification accuracy, 843 of 900</span></div>
+    <div class="big"><b data-to="0.977" data-dec="3">0</b><span>mean Dice of the lung mask</span></div>
+    <div class="big"><b data-to="0.957" data-dec="3">0</b><span>mean IoU of the lung mask</span></div>
+  </div>
+  <div class="row2">
+    <div class="chart">
+      <h3>Accuracy per epoch</h3>
+      <svg id="curves" viewBox="0 0 720 300" role="img" aria-label="Training and validation accuracy over 12 epochs"></svg>
+    </div>
+    <div>
+      <div class="cm" id="cm"></div>
+      <p class="cm-note">40 of the 57 mistakes swap normal and lung opacity. Both come from the same hospital source, so the model has no shortcut there. COVID scores best, which matches the source warning.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 10 GALLERY -->
+<section class="slide" id="s10" data-title="Segmentation examples">
+  <div class="edge"><span>10</span></div>
+  <h2><small>4. Implementation</small>Green is the truth, red is the U-Net</h2>
+  <div class="viewer">
+    <div class="film"><img id="vimg" src="assets/seg0.png" alt=""></div>
+    <div>
+      <h3 id="vt">normal</h3>
+      <div class="v" id="vv"></div>
+      <p class="hand g" style="margin-top:26px;font-size:34px">the two outlines almost cover each other</p>
+    </div>
+  </div>
+  <div class="gal" id="gal"></div>
+</section>
+
+<!-- 11 LIMITS -->
+<section class="slide" id="s11" data-title="Limits">
+  <div class="edge"><span>11</span></div>
+  <h2><small>What we would do next</small>What the numbers do not say</h2>
+  <div class="cols">
+    <div class="lim rise" style="--i:0"><h3>COVID may be a source detector</h3><p>The COVID images come from other collections than the other two classes. Some of that 96% recall could be framing and text, not lungs.</p><span class="hand">test on a new hospital</span></div>
+    <div class="lim rise" style="--i:1"><h3>Normal and opacity blur</h3><p>Same source, no shortcut, and 40 of 57 errors. This is the honest difficulty of the task.</p><span class="hand">more resolution than 128 px</span></div>
+    <div class="lim rise" style="--i:2"><h3>It overfits a little</h3><p>Training accuracy reaches 98% while validation settles near 92%. The mask does not overfit: both Dice curves stay together.</p><span class="hand">stronger augmentation</span></div>
+    <div class="lim rise" style="--i:3"><h3>Not a medical device</h3><p>It is a course project on a public dataset. The worst test mask still scored Dice 0.76, so a doctor must review outlines.</p><span class="hand">a tool to assist, not to decide</span></div>
+  </div>
+</section>
+
+<!-- 12 END -->
+<section class="slide" id="s12" data-title="Summary">
+  <div class="edge"><span>12</span></div>
+  <h2>Takeaways</h2>
+  <ul class="rise">
+    <li style="--i:0"><b>U-Net</b> keeps detail by wiring encoder maps straight into the decoder.</li>
+    <li style="--i:1"><b>Transfer learning</b> let a CPU reach 93.7% accuracy and Dice 0.977 in 46 minutes.</li>
+    <li style="--i:2"><b>The mask</b> shows where the model looks, which makes the diagnosis easier to question.</li>
+    <li style="--i:3"><b>Results are real but limited</b>, mostly by the data sources.</li>
+  </ul>
+  <div class="film out2"><img src="assets/seg7.png" alt="Lung opacity X-ray with matching green and red outlines"></div>
+  <p class="hand">Questions?</p>
+  <p class="src">Code and results: the unet_chest_xray repository. Paper: Ronneberger, Fischer, Brox, 2015.</p>
+</section>
+
+<nav id="nav" aria-label="Slides"></nav>
+<div id="prog"><i></i></div>
+</main>
+
+<script>
+(function(){
+  const stage=document.getElementById('stage');
+  const fit=()=>{const s=Math.min(innerWidth/1600,innerHeight/900);stage.style.transform=`translate(-50%,-50%) scale(${s})`};
+  addEventListener('resize',fit);fit();
+
+  const slides=[...document.querySelectorAll('.slide')];
+  const nav=document.getElementById('nav'),prog=document.querySelector('#prog i');
+  const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
+  let cur=-1,busy=false;
+
+  slides.forEach((s,i)=>{
+    const b=document.createElement('button');b.className='f';b.textContent=String(i+1).padStart(2,'0');
+    b.title=s.dataset.title;b.setAttribute('aria-label','Slide '+(i+1)+': '+s.dataset.title);
+    b.onclick=()=>go(i);nav.appendChild(b);
+  });
+  const tt=document.createElement('span');tt.className='tt';nav.appendChild(tt);
+
+  function go(n){
+    if(n<0||n>=slides.length||n===cur||busy)return;
+    const prev=slides[cur],next=slides[n];
+    stage.classList.toggle('back',n<cur);
+    [...nav.querySelectorAll('.f')].forEach((b,i)=>b.classList.toggle('cur',i===n));
+    tt.textContent=next.dataset.title;
+    prog.style.width=((n+1)/slides.length*100)+'%';
+    history.replaceState(null,'','#'+(n+1));
+    const start=()=>{next.classList.add('run');onShow[next.id]&&onShow[next.id]()};
+    if(prev&&!reduce){
+      busy=true;
+      next.classList.add('enter');prev.classList.add('leave');prev.classList.remove('on');
+      setTimeout(()=>{next.classList.remove('enter');next.classList.add('on');prev.classList.remove('leave','run');busy=false},760);
+      setTimeout(start,250);
+    }else{
+      if(prev){prev.classList.remove('on','run')}
+      next.classList.add('on');start();
+    }
+    cur=n;
+  }
+
+  addEventListener('keydown',e=>{
+    if(['ArrowRight','PageDown',' ','Enter'].includes(e.key)){e.preventDefault();go(cur+1)}
+    else if(['ArrowLeft','PageUp','Backspace'].includes(e.key)){e.preventDefault();go(cur-1)}
+    else if(e.key==='Home')go(0);else if(e.key==='End')go(slides.length-1);
+    else if(e.key==='f'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}
+  });
+  let tx=null;
+  addEventListener('touchstart',e=>tx=e.touches[0].clientX,{passive:true});
+  addEventListener('touchend',e=>{if(tx===null)return;const d=e.changedTouches[0].clientX-tx;if(Math.abs(d)>50)go(cur+(d<0?1:-1));tx=null});
+
+  /* ---------- slide-specific ---------- */
+  const onShow={};
+
+  // counters
+  onShow.s9=()=>{
+    document.querySelectorAll('#s9 .big b').forEach(el=>{
+      const to=+el.dataset.to,dec=+el.dataset.dec,suf=el.dataset.suf||'';
+      if(reduce){el.textContent=to.toFixed(dec)+suf;return}
+      const t0=performance.now()+500;
+      (function tick(t){
+        const p=Math.max(0,Math.min(1,(t-t0)/1500)),e=1-Math.pow(1-p,3);
+        el.textContent=(to*e).toFixed(dec)+suf;
+        if(p<1)requestAnimationFrame(tick);
+      })(performance.now());
+    });
+  };
+
+  // confusion matrix (real numbers from outputs/confusion_matrix.png)
+  const names=['normal','lung_opacity','covid'];
+  const M=[[275,22,3],[18,280,2],[7,5,288]];
+  const cm=document.getElementById('cm');
+  cm.innerHTML='<div class="h"></div>'+names.map(n=>`<div class="h">${n}</div>`).join('');
+  M.forEach((row,i)=>{
+    cm.innerHTML+=`<div class="r">${names[i]}</div>`+row.map((v,j)=>{
+      const a=i===j?.35+.65*v/300:Math.min(.12+v/40,.6);
+      const bg=i===j?`rgba(16,24,27,${a})`:`rgba(238,59,59,${a})`;
+      const col=(i===j&&a>.5)||(i!==j&&a>.45)?'#fff':'#14252a';
+      return `<div style="background:${bg};color:${col}">${v}</div>`}).join('');
+  });
+
+  // learning curves from outputs/history.json
+  const H={
+    train_acc:[0.8,0.884,0.911,0.921,0.935,0.949,0.963,0.965,0.975,0.976,0.981,0.981],
+    val_acc:[0.874,0.911,0.91,0.908,0.913,0.911,0.924,0.92,0.921,0.927,0.923,0.924]
+  };
+  (function(){
+    const svg=document.getElementById('curves'),W=720,Ht=300,l=52,r=14,t=14,b=38;
+    const x=i=>l+i*(W-l-r)/11,y=v=>t+(1-(v-.75)/.27)*(Ht-t-b);
+    let s='';
+    [.8,.85,.9,.95,1].forEach(v=>{s+=`<line x1="${l}" x2="${W-r}" y1="${y(v)}" y2="${y(v)}" stroke="#14252a22"/><text x="${l-8}" y="${y(v)+5}" text-anchor="end" font-size="15" fill="#566a6f" font-family="Familjen Grotesk">${Math.round(v*100)}%</text>`});
+    for(let i=0;i<12;i+=2)s+=`<text x="${x(i)}" y="${Ht-14}" text-anchor="middle" font-size="15" fill="#566a6f" font-family="Familjen Grotesk">${i+1}</text>`;
+    s+=`<text x="${(W+l)/2}" y="${Ht-1}" text-anchor="middle" font-size="14" fill="#566a6f" font-family="Familjen Grotesk">epoch</text>`;
+    const path=(arr,c)=>{const d=arr.map((v,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1)).join(' ');return `<path class="path" style="--len:900" d="${d}" fill="none" stroke="${c}" stroke-width="4" stroke-linejoin="round"/>`};
+    s+=path(H.train_acc,'#3d6d8a')+path(H.val_acc,'#e0a038');
+    s+=`<text x="${x(11)-4}" y="${y(.981)-10}" text-anchor="end" font-size="20" font-weight="600" fill="#3d6d8a" font-family="Familjen Grotesk">train 98%</text>`;
+    s+=`<text x="${x(11)-4}" y="${y(.924)+26}" text-anchor="end" font-size="20" font-weight="600" fill="#b57a14" font-family="Familjen Grotesk">validation 92%</text>`;
+    svg.innerHTML=s;
+  })();
+
+  // gallery (values read from segmentation_examples.png)
+  const G=[
+    ['normal','normal',100,.99],['normal','normal',100,.99],['normal','normal',97,.99],
+    ['lung_opacity','lung_opacity',100,.98],['lung_opacity','lung_opacity',86,.98],['lung_opacity','lung_opacity',99,.97],
+    ['covid','covid',99,.99],['covid','covid',100,.99],['covid','covid',100,.97]];
+  const gal=document.getElementById('gal'),vimg=document.getElementById('vimg'),vt=document.getElementById('vt'),vv=document.getElementById('vv');
+  G.forEach((g,i)=>{
+    const b=document.createElement('button');b.innerHTML=`<img src="assets/seg${i}.png" alt="Example ${i+1}, ${g[0]}">`;
+    b.onclick=()=>pick(i);gal.appendChild(b);
+  });
+  function pick(i){
+    const g=G[i];[...gal.children].forEach((b,k)=>b.classList.toggle('sel',k===i));
+    vimg.src=`assets/seg${i}.png`;vimg.alt=`Test X-ray, true class ${g[0]}`;
+    vt.textContent='True class: '+g[0];
+    vv.innerHTML=`<span>Predicted</span><b>${g[1]} (${g[2]}%)</b><span>Mask Dice</span><b>${g[3].toFixed(2)}</b>`;
+  }
+  pick(0);
+
+  // architecture diagram
+  const INFO={
+    in:['Input','One grayscale X-ray, 1 x 128 x 128, values 0 to 1. It is also the last skip connection.'],
+    stem:['Stem, 64 x 64 x 64','ResNet-18 first layer: a 7x7 convolution with stride 2, using the gray-summed ImageNet weights.'],
+    e1:['Encoder layer 1, 64 x 32 x 32','Max-pool then two residual blocks. Resolution halves, so the network sees a wider area.'],
+    e2:['Encoder layer 2, 128 x 16 x 16','More channels, less resolution: the features grow from edges toward lung shapes.'],
+    e3:['Encoder layer 3, 256 x 8 x 8','Mid-level structure, such as the border of a lung against the ribs.'],
+    bn:['Bottleneck, 512 x 4 x 4','The deepest layer. Two paths leave from here: the decoder for the mask, and global average pooling into a dense layer for the class.'],
+    d1:['Decoder step, 128 x 8 x 8','2x2 up-convolution, concatenate encoder layer 3, then two 3x3 convolutions with BatchNorm and ReLU.'],
+    d2:['Decoder step, 64 x 16 x 16','Same recipe with the layer 2 skip. Decoder weights are trained from scratch.'],
+    d3:['Decoder step, 32 x 32 x 32','Skip from layer 1. The mask now has the outline of two lungs, but is still blurry.'],
+    d4:['Decoder step, 16 x 64 x 64','Skip from the stem. Edges sharpen.'],
+    d5:['Last step, 16 x 128 x 128','The skip here is the input image itself. A 1x1 convolution then gives the mask logits.'],
+    mask:['Lung mask','Logits for every pixel. Above zero means lung. Trained with binary cross-entropy.'],
+    cls:['Class head','Average pool, dropout 0.3, dense layer of 3: normal, lung_opacity, covid. Trained with cross-entropy.']
+  };
+  (function(){
+    const el=document.getElementById('arch');
+    const W=124,H=66,lvl=[62,144,226,308];
+    const encX=[10,175,340,505],decX=[870,1035,1200,1365];
+    const bnX=688,bnY=400,top=-30;
+    const B=(id,x,y,c,a,b,i,tc)=>`<g class="blk" data-id="${id}" style="--i:${i}" tabindex="0" role="button" aria-label="${INFO[id][0]}"><rect x="${x}" y="${y}" width="${W}" height="${H}" rx="5" fill="${c}"/><text x="${x+W/2}" y="${y+29}" text-anchor="middle" fill="${tc||'#fff'}" font-size="21" font-weight="700">${a}</text><text x="${x+W/2}" y="${y+52}" text-anchor="middle" fill="${tc||'#fff'}" font-size="17" opacity=".9">${b}</text></g>`;
+    const ar=d=>`<path d="${d}" stroke="#14252a" stroke-width="3" fill="none" marker-end="url(#ah)"/>`;
+    let s='<svg viewBox="0 -30 1500 585" xmlns="http://www.w3.org/2000/svg" font-family="Familjen Grotesk"><defs><marker id="ah" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#14252a"/></marker></defs>';
+    // flow: input -> stem, down the encoder, bottleneck, up the decoder
+    s+=ar(`M${encX[0]+W/2} ${top+H} L${encX[0]+W/2} ${lvl[0]-3}`);
+    for(let i=0;i<3;i++)s+=ar(`M${encX[i]+W} ${lvl[i]+H/2} L${encX[i+1]-3} ${lvl[i+1]+H/2}`);
+    s+=ar(`M${encX[3]+W/2} ${lvl[3]+H} L${encX[3]+W/2} ${bnY+H/2} L${bnX-3} ${bnY+H/2}`);
+    s+=ar(`M${bnX+W} ${bnY+H/2} L${decX[0]+W/2} ${bnY+H/2} L${decX[0]+W/2} ${lvl[3]+H+3}`);
+    for(let i=0;i<3;i++)s+=ar(`M${decX[i]+W} ${lvl[3-i]+H/2} L${decX[i+1]-3} ${lvl[2-i]+H/2}`);
+    // skips: encoder level k to the decoder block on the same row, drawn along the row's top edge
+    for(let k=0;k<4;k++){const y=lvl[k]+10;s+=`<path class="skip" style="--i:${k}" d="M${encX[k]+W+8} ${y} L${decX[3-k]-8} ${y}"/>`}
+    s+=`<text x="${(encX[0]+decX[3])/2+W/2}" y="${lvl[0]-14}" text-anchor="middle" font-size="27" fill="#ee3b3b" font-family="Caveat" font-weight="700">skip connections: copy and concatenate</text>`;
+    // mask output sits at the top of the decoder
+    s+=B('in',encX[0],top,'#14252a','Input','1 x 128',0);
+    [['stem','Stem','64 x 64'],['e1','Layer 1','64 x 32'],['e2','Layer 2','128 x 16'],['e3','Layer 3','256 x 8']]
+      .forEach((e,i)=>s+=B(e[0],encX[i],lvl[i],'#3d6d8a',e[1],e[2],i+1));
+    s+=B('bn',bnX,bnY,'#14252a','Bottleneck','512 x 4',5,'#f2b552');
+    [['d1','Up 1','128 x 8'],['d2','Up 2','64 x 16'],['d3','Up 3','32 x 32'],['d4','Up 4','16 x 64']]
+      .forEach((d,i)=>s+=B(d[0],decX[i],lvl[3-i],'#e0a038',d[1],d[2],6+i,'#14252a'));
+    s+=B('d5',decX[3],top,'#e0a038','Up 5','16 x 128',10,'#14252a');
+    s+=`<path d="M${decX[3]+W/2} ${lvl[0]-3} L${decX[3]+W/2} ${top+H+3}" stroke="#14252a" stroke-width="3" marker-end="url(#ah)" fill="none"/>`;
+    s+=B('mask',decX[3]-170,top,'#ee3b3b','Lung mask','1 x 128',11);
+    s+=`<path d="M${decX[3]-3} ${top+H/2} L${decX[3]-170+W+3} ${top+H/2}" stroke="#14252a" stroke-width="3" marker-end="url(#ah)" fill="none"/>`;
+    s+=B('cls',bnX+W+120,bnY+H+20,'#18c564','Class head','3 classes',12,'#14252a');
+    s+=`<path d="M${bnX+W/2} ${bnY+H} L${bnX+W/2} ${bnY+H+53} L${bnX+W+117} ${bnY+H+53}" stroke="#14252a" stroke-width="3" fill="none" marker-end="url(#ah)"/>`;
+    s+=`<text x="${encX[0]}" y="${lvl[3]+H+62}" font-size="27" fill="#3d6d8a" font-family="Caveat" font-weight="700">encoder: pretrained ResNet-18</text>`;
+    s+=`<text x="${decX[0]+90}" y="${lvl[3]+H+62}" font-size="27" fill="#a56d10" font-family="Caveat" font-weight="700">decoder: new, expands it back</text>`;
+    s+='</svg>';
+    el.innerHTML=s;
+    const info=document.getElementById('info');
+    const show=id=>{info.innerHTML=`<b>${INFO[id][0]}</b>${INFO[id][1]}`;el.querySelectorAll('.blk').forEach(g=>g.classList.toggle('sel',g.dataset.id===id))};
+    el.querySelectorAll('.blk').forEach(g=>{
+      g.addEventListener('click',()=>show(g.dataset.id));
+      g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.stopPropagation();e.preventDefault();show(g.dataset.id)}});
+    });
+    show('bn');
+  })();
+
+  const h=parseInt(location.hash.slice(1));
+  go(h>=1&&h<=slides.length?h-1:0);
+})();
+</script>
+</body>
+</html>
